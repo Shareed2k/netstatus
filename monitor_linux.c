@@ -8,7 +8,6 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/wireless.h>
-#include <net/if.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
