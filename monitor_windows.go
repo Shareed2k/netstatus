@@ -3,8 +3,8 @@
 package netstatus
 
 /*
-#cgo LDFLAGS: -lstdc++ -lole32
-#import "monitor_windows.hpp"
+#cgo LDFLAGS: -lstdc++ -lole32 -luuid
+#include "monitor_windows.hpp"
 
 // for Windows, cgo exports with __declspec(dllexport), and this is needed for this forward declaration to be valid.
 extern __declspec(dllexport) void universal_callback(CSMHandle hnd, _Bool isConnected);
