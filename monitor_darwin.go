@@ -59,8 +59,11 @@ func startMonitor(ctx context.Context) *monitor {
 	// Using the main queue results in deadlock--don't do it!
 	C.nw_path_monitor_set_queue(mon, C.dispatch_get_global_queue(C.QOS_CLASS_DEFAULT, 0))
 
-	// Use a cgo.Handle to allow C to call back into Go.
-	cbHnd := cgo.NewHandle(func(path C.nw_path_t) {
+	// updateHnd is used exclusively for path-update callbacks.
+	// Per the Network framework docs: "Once the cancel handler has been called,
+	// the update handler will not fire again." So updateHnd is safe to delete
+	// only after cancelDone is signalled (see goroutine below).
+	updateHnd := cgo.NewHandle(func(path C.nw_path_t) {
 		status := makeStatus(path)
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -80,8 +83,14 @@ func startMonitor(ctx context.Context) *monitor {
 			m.onChange(status)
 		}
 	})
-	C.set_update_handler(mon, C.uintptr_t(cbHnd))
-	C.set_cancel_handler(mon, C.uintptr_t(cbHnd))
+
+	// cancelHnd is a separate handle used only for the cancel callback.
+	// invoke_cancel calls the func() to signal cancelDone, then deletes this handle.
+	cancelDone := make(chan struct{})
+	cancelHnd := cgo.NewHandle(func() { close(cancelDone) })
+
+	C.set_update_handler(mon, C.uintptr_t(updateHnd))
+	C.set_cancel_handler(mon, C.uintptr_t(cancelHnd))
 
 	// The callback should get fired immediately with the current state, as per the docs
 	// in path_monitor.h for nw_path_monitor_set_update_handler
@@ -91,6 +100,11 @@ func startMonitor(ctx context.Context) *monitor {
 		<-ctx.Done()
 		C.nw_path_monitor_cancel(mon)
 		C.nw_release(unsafe.Pointer(mon))
+
+		// Wait for the cancel handler. The framework guarantees update callbacks
+		// stop firing once cancel completes, so updateHnd is safe to delete here.
+		<-cancelDone
+		updateHnd.Delete()
 
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -147,15 +161,18 @@ func makeStatus(path C.nw_path_t) Status {
 	}
 }
 
-// Invokes the callback identified by hnd. Used to provide a C-exported function that can call
-// back to a specific go function.
+// invoke_callback calls the update closure registered for the given handle.
 //
 //export invoke_callback
 func invoke_callback(hnd C.uintptr_t, path C.nw_path_t) {
 	cgo.Handle(hnd).Value().(func(C.nw_path_t))(path)
 }
 
+// invoke_cancel signals cancelDone via the cancel closure, then deletes the handle.
+//
 //export invoke_cancel
 func invoke_cancel(hnd C.uintptr_t) {
-	cgo.Handle(hnd).Delete()
+	h := cgo.Handle(hnd)
+	h.Value().(func())()
+	h.Delete()
 }
