@@ -22,7 +22,8 @@ const (
 )
 
 type monitor struct {
-	rcvd chan struct{}
+	rcvd       chan struct{}
+	rcvdClosed bool // guards against double-close; accessed under mu
 
 	mu       sync.Mutex
 	last     *Status
@@ -48,9 +49,10 @@ func startMonitor(ctx context.Context) *monitor {
 		defer m.mu.Unlock()
 
 		var changed bool
-		if m.last == nil {
+		if m.last == nil && !m.rcvdClosed {
+			m.rcvdClosed = true
 			close(m.rcvd)
-		} else if *m.last != s {
+		} else if m.last != nil && *m.last != s {
 			changed = true
 		}
 		m.last = &s
@@ -69,7 +71,8 @@ func startMonitor(ctx context.Context) *monitor {
 
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		if m.last == nil {
+		if m.last == nil && !m.rcvdClosed {
+			m.rcvdClosed = true
 			close(m.rcvd)
 		}
 	}()
