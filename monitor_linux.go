@@ -39,27 +39,7 @@ func startMonitor(ctx context.Context) *monitor {
 		sock:     -1,
 	}
 
-	cbHnd := cgo.NewHandle(func(available C.int, kind C.int) {
-		s := Status{
-			Available: available != 0,
-			Kind:      cKindToInterfaceKind(kind),
-		}
-
-		m.mu.Lock()
-		defer m.mu.Unlock()
-
-		var changed bool
-		if m.last == nil && !m.rcvdClosed {
-			m.rcvdClosed = true
-			close(m.rcvd)
-		} else if m.last != nil && *m.last != s {
-			changed = true
-		}
-		m.last = &s
-		if changed {
-			m.onChange(s)
-		}
-	})
+	cbHnd := cgo.NewHandle(m.handleCallback)
 
 	sock := C.linux_start_monitor(C.uintptr_t(cbHnd))
 	m.sock = sock
@@ -78,6 +58,32 @@ func startMonitor(ctx context.Context) *monitor {
 	}()
 
 	return m
+}
+
+func (m *monitor) handleCallback(available C.int, kind C.int) {
+	m.handleStatus(available != 0, int(kind))
+}
+
+func (m *monitor) handleStatus(available bool, kind int) {
+	s := Status{
+		Available: available,
+		Kind:      cKindToInterfaceKind(C.int(kind)),
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var changed bool
+	if m.last == nil && !m.rcvdClosed {
+		m.rcvdClosed = true
+		close(m.rcvd)
+	} else if m.last != nil && *m.last != s {
+		changed = true
+	}
+	m.last = &s
+	if changed {
+		m.onChange(s)
+	}
 }
 
 func (m *monitor) OnChange(cb func(Status)) {

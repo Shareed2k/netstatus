@@ -38,8 +38,8 @@ static int is_wireless(const char *ifname) {
 }
 
 // evaluate_status scans all network interfaces and sets *available and *kind.
-// An interface is "routable" if it is UP, not loopback, and has at least one
-// non-link-local IPv4 or IPv6 address.
+// An interface is "routable" if it is UP, not loopback, not point-to-point (VPN/tunnel),
+// and has at least one non-link-local IPv4 or IPv6 address.
 static void evaluate_status(int *available, int *kind) {
     *available = 0;
     *kind = KIND_UNKNOWN;
@@ -52,6 +52,7 @@ static void evaluate_status(int *available, int *kind) {
         if (!ifa->ifa_addr) continue;
         if (!(ifa->ifa_flags & IFF_UP)) continue;
         if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+        if (ifa->ifa_flags & IFF_POINTOPOINT) continue; // skip VPN/tunnel (e.g. tailscale)
 
         int af = ifa->ifa_addr->sa_family;
         if (af == AF_INET) {
@@ -87,6 +88,7 @@ static void *monitor_thread(void *arg) {
     monitor_state_t *st = (monitor_state_t *)arg;
     char buf[4096];
     int prev_available = -1; // unknown initial state
+    int prev_kind = KIND_UNKNOWN;
 
     for (;;) {
         ssize_t len = recv(st->nl_sock, buf, sizeof(buf), 0);
@@ -107,8 +109,9 @@ static void *monitor_thread(void *arg) {
 
         int available, kind;
         evaluate_status(&available, &kind);
-        if (available != prev_available) {
+        if (available != prev_available || kind != prev_kind) {
             prev_available = available;
+            prev_kind = kind;
             linux_invoke_callback(st->cb_hnd, available, kind);
         }
     }
